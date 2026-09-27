@@ -5,12 +5,15 @@ import logging
 from dotenv import load_dotenv
 import os
 load_dotenv()
+import argparse
 
 db_password = os.getenv("DB_PASSWORD")
 db_user = os.getenv("DB_USER")
 db_host = os.getenv("DB_HOST")
 db_port = os.getenv("DB_PORT")
 db_name = os.getenv("DB_NAME")
+
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -80,25 +83,43 @@ def transform(df):
         raise
 
 
-def load(df,enginee):
+def load(df,enginee,table_name):
     try:
-        engine = enginee 
-        df.to_sql('sales', engine, if_exists='replace', index=False)
-        logging.info(f'Data has been loaded to sales table sucessfully')
+        # Step 1: try to read existing order_ids from the table
+        try:
+            existingIds = pd.read_sql(sql= f'select order_id from {table_name}',con=enginee)['order_id'].tolist()
+            # print(existingIds)
+        except :
+            existingIds = []
+            
+        # Step 2: filter df to only rows NOT already in the table
+        
+        new_rows = df[~df['order_id'].isin(existingIds)]
+        
+         # Step 3: insert only the new rows, using append instead of replace
+        new_rows.to_sql(table_name, enginee, if_exists='append', index=False)
+        logging.info(f"Inserted {len(new_rows)} new rows into {table_name} (skipped {len(df) - len(new_rows)} duplicates)")
         return
     except Exception as e:
-        logging.error(f"Data not loaded into table: {e}")
+        logging.error(f"Data not loaded into table {table_name}: {e}")
         raise
     
 if __name__ == "__main__":
     try:
+        
+        parser = argparse.ArgumentParser(description="ETL pipeline for sales data")
+        parser.add_argument("--file", type=str, default="sales_data.csv", help="Path to the input CSV file")
+        parser.add_argument("--table", type=str, default="sales", help="Target table name in the database")
+
+        args = parser.parse_args()
+        
         password = db_password
         encoded_pass = quote_plus(password)
         enginee = create_engine(f'postgresql+psycopg://{db_user}:{encoded_pass}@{db_host}:{db_port}/{db_name}')
         
-        raw_df = extract("sales_data.csv") #extract
+        raw_df = extract(args.file) #extract
         clean_df = transform(raw_df) #transform
-        load(clean_df, enginee) #load
+        load(clean_df, enginee, args.table) #load
     
         logging.info("Pipeline completed successfully!")
     except Exception as e:
